@@ -24,3 +24,22 @@ deliveries = Table('report_deliveries', metadata, Column('id', Integer, primary_
 audit = Table('operation_audit', metadata, Column('id', Integer, primary_key=True),
               Column('at', Double, nullable=False), Column('actor', String(40), nullable=False),
               Column('action', String(30), nullable=False), Column('subject', Integer, nullable=False))
+# Uploaded source files. A file is either one site's subscription change ledger
+# (`kind='site'`, `site` names the site) or a handover order (`kind='handover'`).
+ledger_files = Table('ledger_files', metadata, Column('id', Integer, primary_key=True),
+                     Column('kind', String(16), nullable=False, index=True),
+                     Column('site', String(80)), Column('name', String(180), nullable=False),
+                     Column('checksum', String(64), nullable=False, unique=True),
+                     Column('records', JSON, nullable=False), Column('owner', String(40), nullable=False),
+                     Column('created', Double, nullable=False))
+# Immutable, complete materialisations of all files known at ingest time.
+ledger_snapshots = Table('ledger_snapshots', metadata, Column('id', Integer, primary_key=True),
+                         Column('checksum', String(64), nullable=False, unique=True),
+                         Column('dataset_id', Integer, index=True),
+                         Column('file_ids', JSON, nullable=False), Column('entries', JSON, nullable=False),
+                         Column('issues', JSON, nullable=False),
+                         Column('summary', JSON, nullable=False), Column('owner', String(40), nullable=False),
+                         Column('created', Double, nullable=False))
+# Singleton row that serialises ingests and points readers at the latest snapshot.
+ledger_state = Table('ledger_state', metadata, Column('id', Integer, primary_key=True),
+                     Column('snapshot_id', Integer), Column('updated', Double, nullable=False))

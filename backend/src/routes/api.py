@@ -6,9 +6,10 @@ from src.config.settings import ARTIFACTS
 from src.constants.enums import Role
 from src.controllers.query import delivery_status, jobs, recent_activity, require_row, revisions
 from src.models.tables import datasets, runs
-from src.schemas.requests import Delivery, Import, Login, Review, Run
+from src.schemas.requests import Delivery, HandoverOrder, Import, Login, Review, Run, SiteLedger
 from src.services.data import PROFILE, csv_records, save_revision
-from src.services.domain import sample_rows
+from src.services.domain import sample_ledgers, sample_rows
+from src.services.ledger import HANDOVER_FIELDS, current_snapshot, ingest_handover, ingest_site, list_files
 from src.services.workflow import add_run, cancel_schedule, review_run, schedule_report
 from src.utils.exports import write_csv
 from src.utils.security import allowed, authenticate, signed_in
@@ -43,6 +44,12 @@ def example(account=Depends(signed_in)):
     return download_csv(write_csv(sample_rows(), [c['key'] for c in PROFILE['columns']], False), PROFILE['filename'])
 
 
+@router.get('/handover-example.csv')
+def handover_example(account=Depends(signed_in)):
+    _ledgers, handover = sample_ledgers()
+    return download_csv(write_csv(handover, list(HANDOVER_FIELDS), False), 'chengwan-handover-example.csv')
+
+
 @router.get('/datasets')
 def list_datasets(account=Depends(signed_in)):
     return revisions()
@@ -60,6 +67,33 @@ def import_data(body: Import, account=Depends(analyst)):
     rows = csv_records(body.csv)
     key, created = save_revision(body.name, rows, account['username'])
     return {'id': key, 'created': created, 'rows': len(rows)}
+
+
+@router.post('/ledger/sites', status_code=201)
+def import_site(body: SiteLedger, account=Depends(analyst)):
+    return ingest_site(body.site, body.name, body.csv, account['username'])
+
+
+@router.post('/ledger/handovers', status_code=201)
+def import_handover(body: HandoverOrder, account=Depends(analyst)):
+    return ingest_handover(body.name, body.csv, account['username'])
+
+
+@router.get('/ledger')
+def ledger_status(account=Depends(signed_in)):
+    snapshot = current_snapshot()
+    return {
+        'files': list_files(),
+        'snapshot': None if snapshot is None else {
+            'id': snapshot['id'],
+            'dataset_id': snapshot['dataset_id'],
+            'summary': snapshot['summary'],
+            'files': len(snapshot['file_ids']),
+            'created': snapshot['created'],
+        },
+        'entries': [] if snapshot is None else snapshot['entries'],
+        'issues': [] if snapshot is None else snapshot['issues'],
+    }
 
 
 @router.get('/runs')

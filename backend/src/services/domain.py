@@ -92,6 +92,34 @@ def sample_rows() -> list[dict]:
     return rows
 
 
+SITE_ONE = '澄湾一号实验空间'
+SITE_TWO = '澄湾二号实验空间'
+
+
+def sample_ledgers():
+    """Split the demo into two site ledgers plus a handover order.
+
+    Accounts 1-6 sit at the first site and 7-13 at the second, except
+    ``CW-08-02``: the first site keeps reporting it through October while the
+    second site takes it over on 2026-10-01. Before the handover arrives the
+    first site's record stands in; once it does, that out-of-bounds October row
+    is withdrawn and the second site's record adopted, so the merged ledger
+    equals :func:`sample_rows`.
+    """
+    rows = sample_rows()
+    handover = [{'from_site': SITE_ONE, 'to_site': SITE_TWO,
+                 'effective_date': '2026-10-01', 'subscription_id': 'CW-08-02'}]
+    one, two = [], []
+    for row in rows:
+        account = int(row['account_id'].split('-')[1])
+        if account <= 6 or row['subscription_id'] == 'CW-08-02':
+            one.append(row)
+        if account >= 7 and (row['subscription_id'] != 'CW-08-02'
+                             or row['effective_date'] >= '2026-10-01'):
+            two.append(row)
+    return {SITE_ONE: one, SITE_TWO: two}, handover
+
+
 def _month_bounds(month):
     if isinstance(month, str) and re.fullmatch(r'[0-9]{4}-(0[1-9]|1[0-2])', month):
         year, number = map(int, month.split('-'))
@@ -100,32 +128,37 @@ def _month_bounds(month):
     raise ValueError('报告月份无效，请按 YYYY-MM 填写有效月份，例如 2026-10。')
 
 
+def parse_state(label, row):
+    """Validate one CSV row and return its effective state, using label for messages."""
+    account, subscription, tier = (row.get(key) for key in ('account_id', 'subscription_id', 'tier'))
+    if any(not isinstance(value, str) or not value.strip() for value in (account, subscription, tier)):
+        raise ValueError(f'{label}缺少账户、订阅编号或档位，请补齐后重新导入。')
+    effective = row.get('effective_date')
+    try:
+        if not isinstance(effective, str) or not re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}', effective):
+            raise ValueError
+        effective_date = date.fromisoformat(effective)
+    except ValueError as error:
+        raise ValueError(f'{label}生效日无效，请按 YYYY-MM-DD 填写实际日期。') from error
+    status = row.get('status')
+    if status not in ('active', 'inactive'):
+        raise ValueError(f'{label}状态无效，请填写 active 或 inactive。')
+    mrr = row.get('mrr_minor')
+    if type(mrr) is not int or not 0 <= mrr <= MAX_MRR:
+        raise ValueError(f'{label}月额无效，请填写 0 至 {MAX_MRR} 的整数分。')
+    if status == 'inactive' and mrr:
+        raise ValueError(f'{label}已停订，请将停订后的月额填为 0 分。')
+    return SubscriptionState(account, subscription, tier, effective_date, status == 'active', mrr)
+
+
 def _read_states(rows):
     if not rows or len(rows) > MAX_ROWS:
         raise ValueError('请导入 1 至 5000 条订阅状态记录，并包含各订阅自首次启用起的变更。')
 
     states = []
     for number, row in enumerate(rows, 1):
-        account, subscription, tier = (row.get(key) for key in ('account_id', 'subscription_id', 'tier'))
-        if any(not isinstance(value, str) or not value.strip() for value in (account, subscription, tier)):
-            raise ValueError(f'第 {number} 条记录缺少账户、订阅编号或档位，请补齐后重新导入。')
-        label = f'第 {number} 条记录的订阅 {subscription}'
-        effective = row.get('effective_date')
-        try:
-            if not isinstance(effective, str) or not re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}', effective):
-                raise ValueError
-            effective_date = date.fromisoformat(effective)
-        except ValueError as error:
-            raise ValueError(f'{label}生效日无效，请按 YYYY-MM-DD 填写实际日期。') from error
-        status = row.get('status')
-        if status not in ('active', 'inactive'):
-            raise ValueError(f'{label}状态无效，请填写 active 或 inactive。')
-        mrr = row.get('mrr_minor')
-        if type(mrr) is not int or not 0 <= mrr <= MAX_MRR:
-            raise ValueError(f'{label}月额无效，请填写 0 至 {MAX_MRR} 的整数分。')
-        if status == 'inactive' and mrr:
-            raise ValueError(f'{label}已停订，请将停订后的月额填为 0 分。')
-        states.append(SubscriptionState(account, subscription, tier, effective_date, status == 'active', mrr))
+        label = f'第 {number} 条记录的订阅 {row.get("subscription_id")}'
+        states.append(parse_state(label, row))
     return sorted(states, key=lambda state: (state.effective_date, state.subscription_id))
 
 

@@ -5,10 +5,16 @@ from sqlalchemy.exc import IntegrityError
 
 from src.constants.enums import Role
 from src.models.database import engine
-from src.models.tables import datasets, users
+from src.models.tables import datasets, ledger_files, ledger_snapshots, users
 from src.services.data import PROFILE, convert, save_revision
-from src.services.domain import sample_rows
+from src.services.domain import sample_ledgers, sample_rows
+from src.services.ledger import ingest_site
+from src.utils.exports import write_csv
 from src.utils.security import protect
+
+
+def _csv(records, fields):
+    return write_csv(records, fields, False).decode('utf-8-sig')
 
 
 def seed():
@@ -24,8 +30,13 @@ def seed():
                     raise
     records = [{field['key']: convert(row[field['key']], field) for field in PROFILE['columns']} for row in sample_rows()]
     revision, created = save_revision(PROFILE['filename'], records, 'seed')
+    ledgers, _handover = sample_ledgers()
+    fields = [field['key'] for field in PROFILE['columns']]
+    for site, rows in ledgers.items():
+        ingest_site(site, f'{site}.csv', _csv(rows, fields), 'seed')
     with engine.connect() as connection:
-        counts = {table.name: connection.scalar(select(func.count()).select_from(table)) for table in (users, datasets)}
+        counts = {table.name: connection.scalar(select(func.count()).select_from(table))
+                  for table in (users, datasets, ledger_files, ledger_snapshots)}
     return {'revision': revision, 'created': created, **counts, 'rows': len(records)}
 
 

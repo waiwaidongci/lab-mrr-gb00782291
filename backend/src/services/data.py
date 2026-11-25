@@ -77,22 +77,32 @@ def parse_options(values):
     return output
 
 
-def save_revision(name, records, owner):
+def revision_checksum(records):
+    payload = json.dumps(records, sort_keys=True, ensure_ascii=False, separators=(',', ':'), allow_nan=False)
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def save_revision_in(connection, name, records, owner, now=None):
+    """Save a dataset inside an existing transaction so version and pointer commit together."""
     if not name.strip():
         raise ValueError('数据名称不能为空。')
-    payload = json.dumps(records, sort_keys=True, ensure_ascii=False, separators=(',', ':'), allow_nan=False)
-    checksum = hashlib.sha256(payload.encode()).hexdigest()
-    now = time.time()
+    checksum = revision_checksum(records)
+    now = time.time() if now is None else now
+    found = connection.scalar(select(datasets.c.id).where(datasets.c.checksum == checksum))
+    if found is not None:
+        return found, False
+    key = connection.execute(insert(datasets).values(name=name.strip(), owner=owner, records=records,
+                                                     checksum=checksum, created=now)).inserted_primary_key[0]
+    add_event(connection, owner, 'import', key, now)
+    return key, True
+
+
+def save_revision(name, records, owner):
+    checksum = revision_checksum(records)
     existing = select(datasets.c.id).where(datasets.c.checksum == checksum)
     try:
         with engine.begin() as connection:
-            found = connection.scalar(existing)
-            if found is not None:
-                return found, False
-            key = connection.execute(insert(datasets).values(name=name.strip(), owner=owner, records=records,
-                                                             checksum=checksum, created=now)).inserted_primary_key[0]
-            add_event(connection, owner, 'import', key, now)
-            return key, True
+            return save_revision_in(connection, name, records, owner)
     except IntegrityError:
         with engine.connect() as connection:
             found = connection.scalar(existing)

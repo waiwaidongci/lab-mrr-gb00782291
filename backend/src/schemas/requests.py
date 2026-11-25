@@ -28,3 +28,14 @@ class Delivery(BaseModel):
     recipient: str = Field(min_length=2, max_length=100)
     cadence: Literal['once', 'daily']
     scheduled_at: datetime | None = None
+
+
+class SiteLedger(BaseModel):
+    site: str = Field(min_length=1, max_length=80)
+    name: str = Field(min_length=1, max_length=180)
+    csv: str = Field(min_length=1, max_length=1_000_000)
+
+
+class HandoverOrder(BaseModel):
+    name: str = Field(min_length=1, max_length=180)
+    csv: str = Field(min_length=1, max_length=1_000_000)
